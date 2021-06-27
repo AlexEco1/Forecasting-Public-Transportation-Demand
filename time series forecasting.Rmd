@@ -1,0 +1,642 @@
+---
+title: "Time Series Case: Forecasting Public Transportation Demand"
+output: html_notebook
+---
+
+## Background
+
+Forecasting transportation demand is important for multiple purposes such as
+staffing, planning, and inventory control. The public transportation system in
+Santiago de Chile has gone through a major effort of reconstruction. In this
+context, a business intelligence competition took place in October 2006, which
+focused on forecasting demand for public transportation. This case is based on
+the competition, with some modifications.
+
+## Problem Description
+
+A public transportation company is expecting an increase in demand for its ser-
+vices and is planning to acquire new buses and to extend its terminals. These
+investments require a reliable forecast of future demand. To create such forecasts,
+one can use data on historic demand. The company’s data warehouse has data on
+each 15-minute interval between 6:30 and 22:00, on the number of passengers
+arriving at the terminal. As a forecasting consultant, you have been asked to cre-
+ate a forecasting method that can generate forecasts for the number of passengers
+arriving at the terminal.
+
+## Available Data
+
+Part of the historic information is available in the file bicup2006.csv. The file con-
+tains the worksheet “Historic Information” with known demand for a 3-week
+period, separated into 15-minute intervals. The second worksheet (“Future”)
+contains dates and times for a future 3-day period, for which forecasts should be
+generated (as part of the 2006 competition).
+
+## Assignment Goal
+
+Your goal is to create a model/method that produces accurate forecasts. To
+evaluate your accuracy, partition the given historic data into two periods: a
+training period (the first two weeks), and a validation period (the last week).
+Models should be fitted only to the training data and evaluated on the validation
+data.
+Although the competition winning criterion was the lowest Mean Absolute
+Error (MAE) on the future 3-day data, this is not the goal for this assignment.
+Instead, if we consider a more realistic business context, our goal is to create
+a model that generates reasonably good forecasts on any time/day of the week.
+Consider not only predictive metrics such as MAE, MAPE, and RMSE, but also
+look at actual and forecasted values, overlaid on a time plot, as well as a time plot
+of the forecast errors.
+
+## Assignment
+
+For your final model, present the following summary:
+<ol>
+  <li>Name of the method/combination of methods.</li>
+  <li>A brief description of the method/combination.</li>
+  <li>All estimated equations associated with constructing forecasts from this
+method.</li>
+  <li>The MAPE and MAE for the training period and the validation period.</li>
+  <li>Forecasts for the future period (March 22–24), in 15-minute bins.</li>
+  <li>A single chart showing the fit of the final version of the model to the
+entire period (including training, validation, and future). Note that this
+model should be fitted using the combined training plus validation data.</li>
+</ol>
+
+## Time Series Analysis and Forecasting
+
+A ***time series*** is a sequence of observations on a variable measured at successive points in
+time or over successive periods of time.
+
+The pattern of the data is an important factor in understanding how the time series has behaved in the past. If such behavior can
+be expected to continue in the future, we can use the past pattern to guide us in selecting an
+appropriate forecasting method.
+
+### Type of Patterns
+<ol>
+  <li>Trend Pattern</li>
+  <li>Seasonal Pattern</li>
+  <li>Cyclical Pattern</li>
+</ol>
+
+***Important***
+
+A seasonal pattern exists when a series is influenced by seasonal factors (e.g., the quarter of the year, the month, or day of the week).
+
+A cyclic pattern exists when data exhibit rises and falls that are not of fixed period.
+
+### Data Pre-Processing
+
+```{r}
+library(tidyverse)
+#library(forecast)
+library(lubridate)
+library(dplyr)
+library(fpp2)
+```
+
+```{r}
+dem <-read.table('bicuphis.tsv', header = T, sep = '\t')
+dem
+```
+
+Bellow we can see that the dataset contains 63 measurements per day. 
+```{r}
+table(dem$DATE)
+```
+
+
+```{r}
+dem$DATETIME <- parse_date_time(paste(dem$DATE, dem$TIME), orders = "dmy HM")
+```
+
+
+```{r}
+df <- select(dem, -c(1,2))
+df <- df[, c(2,1)]
+df$DAY <- weekdays(df$DATETIME)
+df
+```
+
+A time series object (_ts()_) in R can be thought of as a vector or matrix of numbers along with some information about what times those numbers were recorded. 
+For our example we saw that the dataset contains 63 measurements per day. So if we want to create a time series that contains the daily demand of this public transportation company, we will set the frequency = 63.
+
+```{r, fig.width=14,fig.height=8}
+daily <- ts(df$DEMAND, start = c(1,1), frequency = 63)
+autoplot(daily, facets = FALSE) + xlab("DAYS") + ylab("DEMAND") + ggtitle("Time Series for the daily demand")
+```
+There is not an obvious trend in our data. This means that the demand does not gradually shift to higher or lower values as the days pass.
+We can see this by plotting a trend line.
+
+```{r, fig.width=14,fig.height=8}
+ggplot(data = df, aes(x=DATETIME, y=DEMAND)) + 
+  geom_line()+
+  stat_smooth(
+  color = "#0000FF", fill = "#FC4E07",
+  method = "loess"
+  )
+```
+
+Seasonal patterns are recognized by seeing the same repeating patterns over successive periods of time. 
+
+
+```{r, fig.width=14,fig.height=8}
+ggseasonplot(daily) + theme(axis.title.x=element_blank(),
+axis.text.x=element_blank(),
+axis.ticks.x=element_blank())
+```
+
+```{r, fig.width=14,fig.height=8}
+a_week <- window(daily, start = 1, end =7)
+ggseasonplot(a_week)+theme(axis.title.x=element_blank(),
+axis.text.x=element_blank(),
+axis.ticks.x=element_blank())
+```
+
+We can also create a time series that contains the weekly demand by choosing a frequency = 7*63 = 441
+
+The time series plot is obvious the same, with a different x-axis, that show the weeks. We have data from 3 weeks.
+```{r, fig.width=14,fig.height=8}
+weekly<- ts(df$DEMAND, start = c(1,1), frequency = 441)
+autoplot(weekly, facets = FALSE) + xlab("WEEKS") + ylab("DEMAND")
+```
+
+
+```{r, fig.width=14,fig.height=8}
+ggseasonplot(weekly) +theme(axis.title.x=element_blank(),
+axis.text.x=element_blank(),
+axis.ticks.x=element_blank())
+```
+
+
+```{r, fig.width=14,fig.height=8}
+a_week_new <- window(weekly, start=c(1,1),  end = c(2,441))
+ggseasonplot(a_week_new)+theme(axis.title.x=element_blank(),
+axis.text.x=element_blank(),
+axis.ticks.x=element_blank())
+```
+
+## Autocorrelation and white noise
+
+When data are either seasonal or cyclic, the ACF will peak around the seasonal lags or at the average cycle length.
+
+```{r, fig.width=14,fig.height=8}
+ggAcf(weekly,  type = c("correlation", "covariance", "partial"), plot=TRUE)
+```
+
+White noise is a term that describes purely random data. You can conduct a Ljung-Box test using the function 
+Box.test() to confirm the randomness of a series. 
+A p-value greater than 0.05 suggests that the data are not significantly different from white noise.
+
+```{r}
+Box.test(weekly, lag = 440, type = "Ljung")
+```
+
+## White noise time series example. 
+
+```{r}
+set.seed(3)
+wn <- ts(rnorm(441), frequency = 63)
+autoplot(wn)
+
+Box.test(wn, lag = 440, type = "Ljung")
+```
+
+
+```{r}
+ggAcf(wn)
+```
+
+# TIME SERIES DECOMPORSITION
+
+An ***additive decomposition model***  takes the following form:
+
+$$Y_t = Trend_t + Seasonal_t + Random_t$$
+where:
+
+$$Trend_t = \text{ trend value at time period }t$$
+$$Seasonal_t  = \text{ seasonal value at time period }t$$
+$$Random_t = \text{ random value at time period }t$$
+
+## Additive decomposition model
+
+
+```{r, fig.width=14,fig.height=8}
+decompose_weekly_add = decompose(weekly, "additive")
+autoplot(decompose_weekly_add)
+```
+
+## Multiplicative decomposition model
+
+A ***multiplicative decomposition model*** takes the following form:
+
+$$Y_t = Trend_t \times Seasonal_t \times Random_t$$
+```{r, fig.width=14,fig.height=8}
+decompose_weekly_mult = decompose(weekly, "mult")
+autoplot(decompose_weekly_mult)
+```
+
+# Modeling
+
+### Data - Partitioning
+
+Methods are trained on the earlier training period, and their predictive performance assessed on the later validation period. 
+
+
+```{r}
+# partition the data
+nValid <- 441
+nTrain <- length(weekly) - nValid
+train.ts <- window(weekly, start = c(1, 1), end = c(1, nTrain))
+valid.ts <- window(weekly, start = c(1, nTrain+1), end = c(1, nTrain+nValid))
+```
+
+## Simple forecasting methods
+
+### Average Method
+
+The forecasts of all future values are equal to the average (or “mean”) of the historical data.
+If we let the historical data be denoted by $y_1,...,y_T$, theh we can write the forecasts as 
+
+$$\hat{y}_{T+h|T} = \bar{y} = (y_{1}+\dots+y_{T})/T$$
+The notation $ \hat{y}_{T+h|T} $ is a short-hand for the estimate of $\hat{y}_{T+h|T}$ based on the data $y_1,...,y_T$
+
+```{r, fig.width=14,fig.height=8}
+aver.pred <- meanf(train.ts, h=nValid)
+autoplot(aver.pred)
+```
+
+### Naive and Seasonal naive method
+
+For naïve forecasts, we simply set all forecasts to be the value of the last observation
+
+$$\hat{y}_{T+h|T} = y_{T} $$
+
+
+A similar method is useful for highly seasonal data and it is called seasonal naive. In this case, we set each forecast to be equal to the last observed value from the same season 
+
+$$ \hat{y}_{T+h|T} = y_{T+h-m(k+1)} $$ 
+
+
+where $m = $ the seasonal period, and $k$ is the integer part of $(h-1)/m$
+
+```{r}
+# generate the naive and seasonal naive forecasts
+naive.pred <- naive(train.ts, h = nValid)
+snaive.pred <- snaive(train.ts, h = nValid)
+```
+
+
+```{r, fig.width=14,fig.height=8}
+# plot forecasts and actuals in the training and validation sets
+days <- unique(df$DAY)
+
+plot(train.ts, ylim = c(1, 150), ylab = "Demand", xlab = "Weekly", bty = "l",
+xaxt = "n", xlim = c(1,4), main = "")
+
+axis(1, at = seq(1, 3.9, 1/7), labels = rep(substr(days, 1, 2), 3))
+
+lines(naive.pred$mean, lwd = 2, col = "blue", lty = 1)
+lines(snaive.pred$mean, lwd = 2, col = "red", lty = 1)
+lines(aver.pred$mean,  lwd = 2, col = "green", lty = 1)
+
+lines(valid.ts, col = "grey20", lty = 3)
+lines(c(4, 4), c(0, 150), col='green')
+lines(c(3, 3), c(0, 150), col='green')
+
+
+text(2, 150, "Training")
+text(3.5, 150, "Validation")
+
+arrows(2.97, 145, 1.03, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+arrows(3.03, 145, 3.97, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+```
+
+```{r, fig.width=14,fig.height=8}
+autoplot(naive.pred)
+autoplot(snaive.pred)
+```
+
+## Drift method
+
+A variation on the naïve method is to allow the forecasts to increase or decrease over time, where the amount of change over time (called the ***drift***) is set to be the average change seen in the historical data.
+
+$$\hat{y}_{T+h|T} = y_{T} + \frac{h}{T-1}\sum_{t=2}^T (y_{t}-y_{t-1}) = y_{T} + h \left( \frac{y_{T} -y_{1}}{T-1}\right).$$
+
+```{r, fig.width=14,fig.height=8}
+drift.pred <- rwf(train.ts, h=nValid, drift = TRUE)
+autoplot(drift.pred)
+```
+
+
+## Forecast Accuracy
+
+Forecast Error = ActualValue - Forecast
+
+$$ME = \frac{1}{n}\sum_{i=1}^{n}{Forecast Error_i}$$
+
+$$MPE = 100 \times \frac{1}{n}\sum_{i=1}^{n}{Forecast Error_i/y_i}$$ 
+
+$$MAE = \frac{1}{n}\sum_{i=1}^{n}{|Forecast Error_i|}$$ 
+
+$$MAPE = 100 \times \frac{1}{n}\sum_{i=1}^{n}{|Forecast Error_i/y_i|}$$ 
+
+$$RMSE = \sqrt{ \frac{1}{n}\sum_{i=1}^{n}{Forecast Error_i^2}}$$
+
+$$MASE = \frac{1}{T}\sum_{t=1}^T\left( \frac{\left| e_t \right|}{\frac{1}{T-m}\sum_{t=m+1}^T \left| Y_t-Y_{t-m}\right|} \right) = \frac{\sum_{t=1}^{T} \left| e_t \right|}{\frac{T}{T-m}\sum_{t=m+1}^T \left| Y_t-Y_{t-m}\right|}$$
+
+
+```{r}
+rm(acc_matrix)
+naive_acc <- accuracy(naive.pred, valid.ts)
+snaive_acc<- accuracy(snaive.pred, valid.ts)
+aver_acc <-accuracy(aver.pred, valid.ts)
+drift_acc <-accuracy(drift.pred, valid.ts)
+acc_matrix <- rbind( aver_acc[2,], naive_acc[2,], snaive_acc[2,], drift_acc[2,])
+rownames(acc_matrix) <- c("Average", "Naive", "SNaive", "Drift")
+as.data.frame(acc_matrix)
+```
+
+
+# Forecasting with decomposition
+
+We can actually do forecasts using decomposition to remove the seasonal component and then fit a non-seasonal method to the seasonally adjusted component.
+
+```{r}
+tp1.ts <- subset(weekly, end=length(weekly)-nValid+1)
+test1.ts <- subset(dts, start=length(dts)-nValid+1)
+fit <- stlf(tp1.ts, method='naive', h=441)
+```
+
+```{r, fig.width=14,fig.height=8}
+fit %>% autoplot + 
+    xlab("Time") + 
+    ylab("Demand") +
+    guides(colour=guide_legend(title="Forecast"))
+```
+
+```{r}
+naive.dec_acc <-accuracy(fit, test1.ts)
+acc_matrix <- rbind( acc_matrix, "Naive with dec" = naive.dec_acc[,2])
+as.data.frame(acc_matrix)
+```
+
+# Regression-Based Forecasting
+
+## A Model with Seasonality
+
+### Linear Model
+
+$$Y_t = \beta_0 +\sum_{i=1}^{numSeasons-1}{\beta_i  Season_{i,t}} + \epsilon_t$$
+
+```{r}
+train.lm <- tslm(train.ts ~ season)
+train.lm.pred <- forecast(train.lm, h = nValid)
+```
+
+
+```{r, fig.width=14,fig.height=8}
+# plot forecasts and actuals in the training and validation sets
+days <- unique(df$DAY)
+
+plot(train.lm.pred, ylim = c(1, 150), ylab = "Demand", xlab = "Weekly", bty = "l",
+xaxt = "n", xlim = c(1,4), main = "")
+
+axis(1, at = seq(1, 3.9, 1/7), labels = rep(substr(days, 1, 2), 3))
+
+#lines(train.lm.pred$fitted, lwd = 2, col = "blue", lty = 1)
+
+lines(valid.ts, col = "grey20", lty = 3)
+lines(c(4, 4), c(0, 150), col='green')
+lines(c(3, 3), c(0, 150), col='green')
+
+
+text(2, 150, "Training")
+text(3.5, 150, "Validation")
+
+arrows(2.97, 145, 1.03, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+arrows(3.03, 145, 3.97, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+```
+
+```{r}
+tslm_acc <- accuracy(train.lm.pred , valid.ts)
+acc_matrix <- rbind(acc_matrix, "TSLM" = tslm_acc[2,])
+as.data.frame(acc_matrix)
+```
+
+
+## TSLM with Fourier
+
+```{r}
+K=63
+train_four.lm <- tslm(train.ts ~ fourier(train.ts, K=K))
+train_four.lm.pred <- forecast(train_four.lm, data.frame(fourier(train.ts, K=K, h=nValid)))
+```
+
+
+```{r}
+tslm_four_acc <- accuracy(train_four.lm.pred, valid.ts)
+acc_matrix <- rbind(acc_matrix, "TSLM w. Fourier" = tslm_four_acc[2,])
+as.data.frame(acc_matrix)
+```
+
+## ARIMA
+
+***ARIMA(1,0,0) = first-order autoregressive model:*** if the series is stationary and autocorrelated, perhaps it can be predicted as a multiple of its own previous value, plus a constant. The forecasting equation in this case is
+
+$$ \hat{Y}_t  =  \mu  +\phi_1Y_{t-1} $$
+
+which is Y regressed on itself lagged by one period.
+
+```{r}
+train.res.arima <- Arima(train.ts, order=c(1,0,0))
+valid.res.arima.pred <- forecast(train.res.arima, h=441)
+```
+
+```{r}
+arrima_raw_acc <- accuracy(valid.res.arima.pred, valid.ts)
+acc_matrix <- rbind(acc_matrix,"ARIMA w. raw time series" = arrima_raw_acc[2,])
+as.data.frame(acc_matrix)
+```
+```{r, fig.width=14,fig.height=8}
+autoplot(valid.res.arima.pred)
+```
+
+## Residuals
+
+Residuals are useful in checking whether a model has adequately captured the information in the data. A good forecasting method will yield residuals with the following properties:
+
+<ol>
+<li>The residuals are uncorrelated. If there are correlations between residuals, then there is information left in the residuals which should be used in computing forecasts.</li>
+<li>The residuals have zero mean. If the residuals have a mean other than zero, then the forecasts are biased.</li>
+<li>The residuals have constant variance.</li>
+<li>The residuals are normally distributed.</li>
+</ol>
+
+```{r}
+checkresiduals(train.lm.pred)
+```
+
+### ARIMA at residuals
+
+```{r}
+train.res.arima <- Arima(train.lm$residuals, order=c(1,0,0))
+valid.res.arima.pred <- forecast(train.res.arima, h=441)
+
+ensemble.ts <- valid.res.arima.pred$mean+train.lm.pred$mean
+
+arrima_res_acc <- accuracy(ensemble.ts, valid.ts)
+arrima_res_acc <- cbind(t(as.matrix(arrima_res_acc[,1:5])),"MASE"=c(NaN),t(as.matrix(arrima_res_acc[,6:7])))
+acc_matrix <- rbind(acc_matrix,arrima_res_acc)
+rownames(acc_matrix) <- c("Average", "Naive", "SNaive", "Drift","Naive w. Dec", "TSLM","TSLM w. Fourier", "ARIMA with raw time series", "ARIMA on residuals" )
+as.data.frame(acc_matrix)
+```
+
+```{r, fig.width=14,fig.height=8}
+# plot forecasts and actuals in the training and validation sets
+days <- unique(df$DAY)
+
+plot(ensemble.ts, ylim = c(1, 150), ylab = "Demand", xlab = "Weekly", bty = "l",
+xaxt = "n", xlim = c(1,4), main = "", col = "blue")
+
+axis(1, at = seq(1, 3.9, 1/7), labels = rep(substr(days, 1, 2), 3))
+
+lines(train.ts)
+lines(valid.ts, col = "grey20", lty = 3)
+lines(train.lm.pred$mean, col = "#b23817", lty = 2)
+lines(c(4, 4), c(0, 150), col='green')
+lines(c(3, 3), c(0, 150), col='green')
+
+
+text(2, 150, "Training")
+text(3.5, 150, "Validation")
+
+arrows(2.97, 145, 1.03, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+arrows(3.03, 145, 3.97, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+```
+
+## ARIMA at residuals with fourier
+
+```{r}
+fit <- auto.arima(train.ts, xreg = fourier(train.ts, K = 63))
+```
+
+```{r}
+autoplot(forecast(fit, xreg=fourier(train.ts, K=63, h=441)))
+checkresiduals(fit)
+```
+
+
+```{r}
+arrima_four_acc <- accuracy(forecast(fit, xreg=fourier(train.ts, K=63, h=441)), test.ts)
+acc_matrix <- rbind(acc_matrix,"ARIMA w. Fourier" = arrima_four_acc[2,])
+as.data.frame(acc_matrix)
+```
+
+## Simple Exponential smoothing
+
+$$F_{t+1} = \alpha Y_t + \alpha(1-\alpha) Y_{t-1} + \alpha(1-\alpha)^2 Y_{t-2} + ...  $$
+
+where $\alpha = \text{ smoothing constant } (0\leq \alpha \leq 1)$
+
+The above formulation displays the exponential smoother as a weighted average of all past oservations, with exponentially decaying weights
+
+It turns out that we can write the exponential forecaster in another way,
+which is very useful in practice:
+$$ F_{t+1} = F_t + \alpha E_t$$
+where $E_t$ is the forecast error at time t.
+
+
+```{r}
+ses <- ets(train.lm$residuals, model = "ANN")
+ses.pred <- forecast(ses, h=nValid, level = 0)
+
+ensemble.ts <- ses.pred$mean+train.lm.pred$mean
+```
+
+```{r}
+ses_res_acc <- accuracy(ensemble.ts, valid.ts)
+ses_res_acc <- cbind(t(as.matrix(ses_res_acc[,1:5])),"MASE"=c(NaN),t(as.matrix(ses_res_acc[,6:7])))
+acc_matrix <- rbind(acc_matrix,ses_res_acc )
+rownames(acc_matrix) <- c("Average", "Naive", "SNaive", "Drift","Naive w. Dec", "TSLM","TSLM w. Fourier", "ARIMA with raw time series", "ARIMA on residuals", "ARIMA w. Fourier", "ETS on residuals" )
+as.data.frame(acc_matrix)
+```
+
+```{r, fig.width=14,fig.height=8}
+# plot forecasts and actuals in the training and validation sets
+days <- unique(df$DAY)
+
+plot(ensemble.ts, ylim = c(1, 150), ylab = "Demand", xlab = "Weekly", bty = "l",
+xaxt = "n", xlim = c(1,4), main = "", col = "blue")
+
+axis(1, at = seq(1, 3.9, 1/7), labels = rep(substr(days, 1, 2), 3))
+
+lines(train.ts)
+lines(valid.ts, col = "grey20", lty = 3)
+lines(train.lm.pred$mean, col = "#b23817", lty = 2)
+lines(c(4, 4), c(0, 150), col='green')
+lines(c(3, 3), c(0, 150), col='green')
+
+
+text(2, 150, "Training")
+text(3.5, 150, "Validation")
+
+arrows(2.97, 145, 1.03, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+arrows(3.03, 145, 3.97, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+```
+
+
+## Multi-Seasonal Time Series
+
+```{r}
+dts <- msts(dem$DEMAND, seasonal.periods=c(63,441))
+tp1.ts <- subset(dts, end=length(dts)-nValid+1)
+test1.ts <- subset(dts, start=length(dts)-nValid+2)
+
+fit <- tbats(tp1.ts)
+
+accuracy(forecast(fit, h=440), test1.ts)
+```
+
+
+## Future predictions
+
+```{r}
+as.data.frame(acc_matrix)
+```
+
+## TSLM w. Fourier
+```{r}
+K=63
+train.lm <- tslm(weekly ~ fourier(weekly, K=K))
+train.lm.pred <- forecast(train.lm, data.frame(fourier(weekly, K=K, h=3*63)))
+```
+
+
+```{r, fig.width=14,fig.height=8}
+# plot forecasts and actuals in the training and validation sets
+days <- unique(df$DAY)
+
+plot(train.lm.pred, ylim = c(1, 150), ylab = "Demand", xlab = "Weekly", bty = "l",
+xaxt = "n", xlim = c(1,4+3/7), main = "")
+
+axis(1, at = seq(1, 3.9+3/7, 1/7),labels = c(rep(substr(days, 1, 2), 3), substr(days[1:3], 1, 2)))
+
+lines(c(4, 4), c(0, 150), col='green')
+
+text(2, 150, "Training")
+text(4.2, 150, "Future")
+
+
+arrows(3.97, 145, 1.03, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+arrows(4+3/7, 145, 4.03, 145, code = 3, length = 0.1, lwd = 1,angle = 30)
+```
+
+```{r}
+autoplot(train.lm.pred)
+```
+
+
+```{r}
+fut_df <-read.table('bicupfut.tsv', header = T, sep = '\t')
+fut_df$DEMAND <- ceiling(as.vector(train.lm.pred$mean))
+fut_df
+```
